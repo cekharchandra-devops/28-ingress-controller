@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app1
+  labels:
+    app: app1
+    env: prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app1
+      env: prod
+  template:
+    metadata:
+      labels:
+        app: app1
+        env: prod
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app1
+  labels:
+    app: app1
+    env: prod
+spec:
+  # type: LoadBalancer
+  selector:
+    app: app1
+    env: prod
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+      name: nginx-svc-port
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app1
+  namespace: expense
+  annotations:
+      #kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/tags: Environment=dev,Team=test
+      alb.ingress.kubernetes.io/group.name: expense
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:528757792370:certificate/6346d51a-e900-4e1a-8c46-2e510541badb
+
+spec:
+  ingressClassName: alb
+  rules:
+  - host: "app1.devsecmlops.online"
+    http:
+      paths:
+        - path: /
+          pathType: prefix
+          backend:
+            service:
+              name: app1
+              port:
+                number: 80
