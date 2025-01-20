@@ -153,5 +153,138 @@ helm repo add eks https://aws.github.io/eks-charts
 ```
 ```
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system --set clusterName=expense --set serviceAccount.create=false --set serviceAccount.name=aws-load-balancer-controller
-``
+```
 
+# why oidc brigde is required between serviceaccount and iam role
+
+
+The OIDC bridge between Kubernetes ServiceAccounts and AWS IAM Roles is required to enable secure, fine-grained access control for pods running in an Amazon EKS cluster. Let me explain step by step why this is needed:
+
+1. Challenge: Secure Access to AWS Resources from Pods
+
+    Pods in a Kubernetes cluster often need to access AWS services, like:
+
+    S3 buckets
+    DynamoDB tables
+    RDS databases
+    Secrets Manager
+    SNS/SQS
+    Load Balancers, etc.
+    
+By default, AWS IAM roles are designed to control access to AWS resources, but IAM roles are for AWS entities like EC2 instances, Lambda functions, or users, not Kubernetes pods.
+
+So, we need a way to securely allow pods to assume specific IAM roles and access AWS services.
+
+2. Why Not Use Instance IAM Roles?
+
+Before OIDC integration, EKS clusters allowed pods to access AWS services by attaching an IAM role to the EC2 instances (nodes) hosting the cluster. However, this approach had limitations:
+
+    Broad Permissions: All pods on the node inherited the same permissions as the node's IAM role, even if they didn’t need them.
+
+    Security Risk: A compromised pod could misuse those permissions.
+
+    No Fine-Grained Control: It was hard to restrict permissions for individual pods or workloads.
+
+3. Solution: ServiceAccount + IAM Role with OIDC
+
+The OIDC bridge solves these issues by linking Kubernetes ServiceAccounts with AWS IAM Roles. Here's why this is necessary:
+
+a) ServiceAccount and Workload Identity
+
+    Kubernetes ServiceAccounts are identities for pods in a cluster.
+
+    Each pod can be assigned a unique ServiceAccount, which provides a way to identify that pod within the cluster.
+
+b) OIDC Authentication
+
+    AWS uses OpenID Connect (OIDC), a standard protocol for authenticating and verifying identities.
+
+    Kubernetes issues an OIDC-compatible JWT token for each ServiceAccount. This token acts as a "proof of identity" for pods using that ServiceAccount.
+
+    AWS verifies this token to ensure the request is coming from the right ServiceAccount in the cluster.
+
+c) IAM Role Trust Policy
+
+    AWS IAM roles can have trust policies specifying who can assume the role.
+
+    When you enable OIDC in your EKS cluster, AWS allows you to configure an IAM role to trust Kubernetes ServiceAccounts via OIDC.
+
+d) Fine-Grained Permissions
+
+    With OIDC, you can map a specific Kubernetes ServiceAccount to a specific IAM role.
+
+    This means only the pods using that ServiceAccount get the IAM permissions defined in the role.
+
+4. How the OIDC Bridge Works
+
+Here’s how the OIDC bridge operates step by step:
+
+Associate an OIDC Provider:
+
+***Using eksctl or the AWS Management Console, you associate an OIDC provider with your EKS cluster.
+This allows AWS to trust the tokens issued by the Kubernetes API server.
+***
+
+Create a Kubernetes ServiceAccount:
+
+You create a ServiceAccount in Kubernetes and annotate it with the corresponding IAM role ARN.
+
+Pod Uses the ServiceAccount:
+
+A pod in your cluster is configured to use the ServiceAccount.
+Kubernetes mounts a token (JWT) for the ServiceAccount into the pod.
+
+Pod Makes an AWS Request:
+
+The pod sends an API request to AWS and includes the JWT token in the request.
+The token proves the pod’s identity to AWS.
+
+AWS Verifies the Token:
+
+AWS checks the token using the OIDC provider to confirm:
+
+It was issued by the EKS cluster.
+
+It belongs to the correct ServiceAccount.
+
+AWS then allows the pod to assume the mapped IAM role.
+
+Pod Gains Temporary AWS Credentials:
+
+After assuming the IAM role, the pod gets temporary AWS credentials that allow it to interact with AWS services securely.
+
+----
+
+The Kubernetes Issuer URL is a unique URL associated with the OpenID Connect (OIDC) provider for your EKS cluster. This URL is used to identify your Kubernetes cluster to AWS and validate tokens issued by the Kubernetes API server for service accounts.
+
+Structure of the Issuer URL
+
+For Amazon EKS, the OIDC Issuer URL follows this format:
+
+```
+https://oidc.eks.<region>.amazonaws.com/id/<OIDC-ID>
+
+```
+
+Using eksctl: If you associated the OIDC provider using eksctl, it provides the OIDC URL:
+
+```
+eksctl utils associate-iam-oidc-provider --region <region> --cluster <cluster-name> --approve
+```
+Output:
+
+![alt text](image.png)
+
+![alt text](image-1.png)
+
+Why Is the Issuer URL Important?
+
+Token Validation:
+
+The Issuer URL identifies the source of the JWT tokens issued by the Kubernetes API server for service accounts.
+
+AWS uses this URL to retrieve the public keys (from the JWKS endpoint) to validate the signature of the JWT.
+
+IAM Role Trust Policy:
+
+The trust relationship of IAM roles relies on the OIDC Issuer URL. It ensures that only tokens from your cluster's service accounts can assume specific roles.
